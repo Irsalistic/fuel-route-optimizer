@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fuel route</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #1f2933;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+    header {
+      padding: 12px 16px;
+      border-bottom: 1px solid #e4e7eb;
+      background: #fff;
+    }
+    h1 { font-size: 18px; margin: 0 0 8px; font-weight: 600; }
+    form { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+    label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #52606d; }
+    input {
+      font: inherit;
+      padding: 6px 8px;
+      border: 1px solid #cbd2d9;
+      border-radius: 4px;
+      min-width: 180px;
+    }
+    button {
+      font: inherit;
+      padding: 7px 12px;
+      border: 0;
+      border-radius: 4px;
+      background: #1d4e89;
+      color: #fff;
+      cursor: pointer;
+    }
+    #layout { display: grid; grid-template-rows: 280px 1fr; min-height: 0; }
+    #summary {
+      overflow: auto;
+      padding: 12px 16px;
+      background: #f8fafc;
+      border-bottom: 1px solid #e4e7eb;
+    }
+    #map { min-height: 320px; }
+    .error { color: #9b1c1c; }
+    .stop { margin: 8px 0; }
+    .muted { color: #52606d; }
+    .stop-pin {
+      background: #c2410c;
+      color: #fff;
+      border-radius: 50%;
+      width: 26px;
+      height: 26px;
+      line-height: 22px;
+      text-align: center;
+      font-weight: 600;
+      border: 2px solid #fff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+    }
+    @media (min-width: 900px) {
+      #layout { grid-template-columns: 360px 1fr; grid-template-rows: 1fr; }
+      #summary { border-bottom: 0; border-right: 1px solid #e4e7eb; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Fuel stops along a route</h1>
+    <form id="route-form">
+      <label>Start
+        <input id="start" name="start" required value="{{ start }}">
+      </label>
+      <label>End
+        <input id="end" name="end" required value="{{ end }}">
+      </label>
+      <button type="submit">Show route</button>
+    </form>
+  </header>
+  <div id="layout">
+    <section id="summary">Loading route…</section>
+    <div id="map"></div>
+  </div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const startInput = document.getElementById("start");
+    const endInput = document.getElementById("end");
+    const summary = document.getElementById("summary");
+    const map = L.map("map").setView([39.5, -98.35], 4);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 18,
+      attribution: "&copy; OpenStreetMap"
+    }).addTo(map);
+    let layer = L.layerGroup().addTo(map);
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function money(value) {
+      return Number(value).toLocaleString("en-US", { style: "currency", currency: "USD" });
+    }
+
+    function draw(data) {
+      layer.clearLayers();
+      const line = L.geoJSON({
+        type: "Feature",
+        geometry: data.route,
+        properties: {}
+      }, { style: { color: "#1d4e89", weight: 4 } }).addTo(layer);
+
+      const startMarker = L.circleMarker([data.start.lat, data.start.lon], {
+        radius: 7, color: "#166534", fillColor: "#166534", fillOpacity: 1
+      }).bindPopup("Start: " + escapeHtml(data.start.city) + ", " + data.start.state);
+      const endMarker = L.circleMarker([data.end.lat, data.end.lon], {
+        radius: 7, color: "#9b1c1c", fillColor: "#9b1c1c", fillOpacity: 1
+      }).bindPopup("End: " + escapeHtml(data.end.city) + ", " + data.end.state);
+      startMarker.addTo(layer);
+      endMarker.addTo(layer);
+
+      data.stops.forEach(function (stop, index) {
+        const html = "<strong>" + (index + 1) + ". " + escapeHtml(stop.name) + "</strong><br>"
+          + escapeHtml(stop.address) + "<br>"
+          + escapeHtml(stop.city) + ", " + escapeHtml(stop.state) + "<br>"
+          + money(stop.price_per_gallon) + "/gal, "
+          + stop.gallons + " gal, " + money(stop.cost) + "<br>"
+          + "mile " + stop.mile_marker;
+        const icon = L.divIcon({
+          className: "stop-pin",
+          html: String(index + 1),
+          iconSize: [26, 26],
+          iconAnchor: [13, 13]
+        });
+        L.marker([stop.lat, stop.lon], { icon: icon }).bindPopup(html).addTo(layer);
+      });
+
+      const bounds = line.getBounds();
+      if (bounds.isValid()) {
+        map.fitBounds(bounds, { padding: [24, 24] });
+      }
+
+      const items = data.stops.map(function (stop, index) {
+        return "<div class='stop'><strong>" + (index + 1) + ". " + escapeHtml(stop.name) + "</strong><br>"
+          + escapeHtml(stop.city) + ", " + escapeHtml(stop.state)
+          + " · mile " + stop.mile_marker + "<br>"
+          + money(stop.price_per_gallon) + "/gal · "
+          + stop.gallons + " gal · " + money(stop.cost) + "</div>";
+      }).join("");
+
+      const hours = Math.floor(data.duration_minutes / 60);
+      const mins = data.duration_minutes % 60;
+      summary.innerHTML = "<p><strong>" + data.distance_miles + " miles</strong>"
+        + " · " + hours + "h " + mins + "m<br>"
+        + "Fuel bought: <strong>" + money(data.fuel.total_cost) + "</strong>"
+        + " (" + data.fuel.total_gallons + " gal)"
+        + "<br><span class='muted'>Burned " + data.fuel.gallons_burned
+        + " gal. Started full, so the first " + data.assumptions.tank_gallons
+        + " gallons are not billed. "
+        + data.routing_api_calls + " routing call"
+        + (data.routing_api_calls === 1 ? "" : "s") + ".</span></p>"
+        + (items || "<p class='muted'>No stop. The trip fits in one tank.</p>");
+    }
+
+    async function loadRoute(start, end) {
+      summary.textContent = "Loading route…";
+      const url = "/api/route/?start=" + encodeURIComponent(start) + "&end=" + encodeURIComponent(end);
+      let response;
+      try {
+        response = await fetch(url);
+      } catch (err) {
+        summary.innerHTML = "<p class='error'>Could not reach the server.</p>";
+        return;
+      }
+      const data = await response.json();
+      if (!response.ok) {
+        summary.innerHTML = "<p class='error'>" + escapeHtml(data.error || "Request failed.") + "</p>";
+        return;
+      }
+      draw(data);
+    }
+
+    document.getElementById("route-form").addEventListener("submit", function (event) {
+      event.preventDefault();
+      const start = startInput.value.trim();
+      const end = endInput.value.trim();
+      const next = "/map/?start=" + encodeURIComponent(start) + "&end=" + encodeURIComponent(end);
+      history.replaceState(null, "", next);
+      loadRoute(start, end);
+    });
+
+    loadRoute(startInput.value.trim(), endInput.value.trim());
+  </script>
+</body>
+</html>
